@@ -2,7 +2,7 @@
 
 ## Canonical application URL
 
-`APP_URL` is the single canonical base URL for application routes, generated iframe URLs, and the Google OAuth callback. It must be an absolute URL and should include the Webflow Cloud mount path, for example `https://revrebel-rebuild.webflow.io/app`.
+`APP_URL` is the single canonical base URL for application routes, generated iframe URLs, and the Google OAuth callback. It must be an absolute URL and should include the Webflow Cloud mount path, for example `https://revrebel.webflow.io/app`.
 
 When the application moves to another domain, update `APP_URL` and register `${APP_URL}/api/auth/google/callback` as an authorized redirect URI in Google Cloud. Application code must not hardcode a deployment hostname or independently configure another application base URL.
 
