@@ -3,6 +3,7 @@ import { createSign } from 'node:crypto';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
+const googleRequestSignal = () => AbortSignal.timeout(15_000);
 
 export class GoogleServiceAccountConfigurationError extends Error {
   constructor(name: string) {
@@ -77,6 +78,7 @@ export async function getDelegatedGoogleAccessToken(subject: string) {
       assertion,
     }),
     cache: 'no-store',
+    signal: googleRequestSignal(),
   });
   if (!response.ok) {
     throw new Error(`Delegated Google authorization failed with ${response.status}.`);
@@ -109,6 +111,7 @@ export async function listDelegatedGoogleCalendars(subject: string) {
     const response = await fetch(`${GOOGLE_CALENDAR_API}/users/me/calendarList?${params}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: 'no-store',
+      signal: googleRequestSignal(),
     });
     if (!response.ok) throw new Error(`Google calendar discovery failed with ${response.status}.`);
     const result = await response.json() as {
@@ -146,6 +149,7 @@ export async function createDelegatedGoogleCalendar(subject: string, summary: st
     },
     body: JSON.stringify({ summary, timeZone }),
     cache: 'no-store',
+    signal: googleRequestSignal(),
   });
   if (!response.ok) throw new Error(`Google calendar creation failed with ${response.status}.`);
   return response.json() as Promise<{ id: string; summary: string; timeZone?: string }>;
@@ -192,6 +196,7 @@ export async function insertDelegatedGoogleEvent(input: {
         } : undefined,
       }),
       cache: 'no-store',
+      signal: googleRequestSignal(),
     },
   );
   if (!response.ok) throw new Error(`Google event creation failed with ${response.status}.`);
@@ -221,6 +226,7 @@ export async function updateDelegatedGoogleEvent(input: {
         location: input.location,
       }),
       cache: 'no-store',
+      signal: googleRequestSignal(),
     },
   );
   if (!response.ok) throw new Error(`Google event update failed with ${response.status}.`);
@@ -231,7 +237,11 @@ export async function getDelegatedGoogleEvent(input: { subject: string; calendar
   const accessToken = await getDelegatedGoogleAccessToken(input.subject);
   const response = await fetch(
     `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
-    { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' },
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+      signal: googleRequestSignal(),
+    },
   );
   if (response.status === 404 || response.status === 410) return null;
   if (!response.ok) throw new Error(`Google event lookup failed with ${response.status}.`);
@@ -248,7 +258,12 @@ export async function deleteDelegatedGoogleEvent(input: {
   const params = new URLSearchParams({ sendUpdates: input.notifyAttendee ? 'all' : 'none' });
   const response = await fetch(
     `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}?${params}`,
-    { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' },
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+      signal: googleRequestSignal(),
+    },
   );
   if (response.status === 404 || response.status === 410) return;
   if (!response.ok) throw new Error(`Google event cancellation failed with ${response.status}.`);

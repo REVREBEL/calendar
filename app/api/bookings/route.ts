@@ -6,6 +6,7 @@ import {
   updateDelegatedGoogleEvent,
 } from '@/src/lib/google-service-account';
 import { appUrl } from '@/src/lib/app-url';
+import { busyPeriodsOverlap, fetchBookingPageBusyPeriods } from '@/src/lib/availability-server';
 import { createBookingManagementToken, readBookingManagementToken } from '@/src/lib/booking-management-token';
 import { listBookingPages, WebflowConfigurationError } from '@/src/lib/webflow-server';
 
@@ -63,6 +64,26 @@ export async function POST(request: NextRequest) {
     const delegationSubject = page.isUserTemplate
       ? page.googleCalendarId
       : assignedCalendarIds[0] || 'helpdesk@revrebel.io';
+
+    try {
+      const busyPeriods = await fetchBookingPageBusyPeriods({
+        page,
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        timeZone,
+      });
+      if (busyPeriodsOverlap(busyPeriods, start, end)) {
+        return NextResponse.json({
+          error: 'That time is no longer available. Please choose another time.',
+        }, { status: 409 });
+      }
+    } catch (error) {
+      console.error('[booking] Unable to verify live Google availability.', error);
+      return NextResponse.json({
+        error: 'Live calendar availability is temporarily unavailable. Please try again shortly.',
+      }, { status: 503 });
+    }
+
     const meetingName = page.templateName || page.name || 'Meeting';
     const clientFirstName = clientName.trim().split(/\s+/)[0] || 'Partner';
     const eventSummary = `REVREBEL | ${meetingName} with ${clientFirstName}`;

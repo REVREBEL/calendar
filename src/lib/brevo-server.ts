@@ -81,6 +81,7 @@ export async function sendBrevoBookingEmail(input: {
       params: input.params,
     }),
     cache: 'no-store',
+    signal: AbortSignal.timeout(12_000),
   });
   const result = await response.json().catch(() => ({})) as { message?: string; messageId?: string };
   if (!response.ok) throw new Error(result.message || `Brevo rejected template ${templateId}.`);

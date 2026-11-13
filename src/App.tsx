@@ -13,6 +13,7 @@ const appApiUrl = (publicAppUrl: string, path: string) =>
   `${publicAppUrl.replace(/\/$/, '')}${path}`;
 
 const DEFAULT_BOOKING_CALENDAR_SLUG = 'revrebel-helpdesk';
+export type AvailabilityStatus = 'loading' | 'ready' | 'error';
 
 export default function App({ publicAppUrl }: { publicAppUrl: string }) {
   // Check if iframe rendering mode
@@ -31,13 +32,13 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
   const [googleToken, setGoogleToken] = useState<string | null>(null);
   const [googleUser, setGoogleUser] = useState<any | null>(null);
   const [googleEvents, setGoogleEvents] = useState<CalendarEvent[]>([]);
-  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>('loading');
+  const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
 
   // Read only non-sensitive connection metadata. OAuth tokens remain in an
   // encrypted, HTTP-only server cookie and are never exposed to this client.
   useEffect(() => {
     const workspaceRequested = new URLSearchParams(window.location.search).get('workspace') === 'true';
-    setIsLoadingEvents(true);
     fetch(appApiUrl(publicAppUrl, '/api/auth/google/status'), { cache: 'no-store' })
       .then((response) => response.json())
       .then((status) => {
@@ -51,8 +52,7 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
       .catch(() => {
         setGoogleToken(null);
         setGoogleUser(null);
-      })
-      .finally(() => setIsLoadingEvents(false));
+      });
   }, [publicAppUrl]);
 
   const handleGoogleSignIn = async () => {
@@ -63,7 +63,7 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
     await fetch(appApiUrl(publicAppUrl, '/api/auth/google/status'), { method: 'DELETE' });
     setGoogleToken(null);
     setGoogleUser(null);
-    setGoogleEvents([]);
+    setAvailabilityRefreshKey((current) => current + 1);
   };
 
   useEffect(() => {
@@ -136,6 +136,52 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
 
     return () => controller.abort();
   }, [calendarSlug, isDataReady, publicAppUrl]);
+
+  useEffect(() => {
+    if (!calendarSlug) return;
+
+    const controller = new AbortController();
+    const from = new Date(Date.now() - 24 * 60 * 60_000);
+    const to = new Date(Date.now() + 90 * 24 * 60 * 60_000);
+    const params = new URLSearchParams({
+      calendar: calendarSlug,
+      from: from.toISOString(),
+      to: to.toISOString(),
+    });
+
+    setAvailabilityStatus('loading');
+    setGoogleEvents([]);
+    fetch(appApiUrl(publicAppUrl, `/api/availability?${params}`), {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = await response.json() as {
+          busy?: Array<{ start: string; end: string }>;
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(result.busy)) {
+          throw new Error(result.error || 'Live availability could not be loaded.');
+        }
+        return result.busy;
+      })
+      .then((busy) => {
+        setGoogleEvents(busy.map((period, index) => ({
+          id: `busy-${index}-${period.start}`,
+          start: { dateTime: period.start },
+          end: { dateTime: period.end },
+        })));
+        setAvailabilityStatus('ready');
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        console.error('[availability] Unable to load live calendar availability.', error);
+        setGoogleEvents([]);
+        setAvailabilityStatus('error');
+      });
+
+    return () => controller.abort();
+  }, [availabilityRefreshKey, calendarSlug, publicAppUrl]);
 
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get('reschedule');
@@ -281,7 +327,9 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
         rescheduleToken: new URLSearchParams(window.location.search).get('reschedule') || undefined,
       }),
     });
-    const bookingResult = await bookingResponse.json() as {
+    const bookingResult = await bookingResponse.json().catch(() => ({
+      error: `The booking server returned an invalid ${bookingResponse.status} response.`,
+    })) as {
       success?: boolean;
       error?: string;
       manageUrl?: string;
@@ -294,8 +342,12 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
       emailKind?: 'confirmation' | 'change';
     };
     if (!bookingResponse.ok || !bookingResult.success) {
+      if (bookingResponse.status === 409) {
+        setAvailabilityRefreshKey((current) => current + 1);
+      }
       throw new Error(bookingResult.error || 'The meeting could not be added to Google Calendar.');
     }
+    setAvailabilityRefreshKey((current) => current + 1);
 
     const currentUrl = new URL(window.location.href);
     if (currentUrl.searchParams.has('reschedule')) {
@@ -340,9 +392,10 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
         const h12 = h % 12 === 0 ? 12 : h % 12;
         const formattedTime = `${h12}:${mStr} ${ampm}`;
 
-        await fetch(appApiUrl(publicAppUrl, '/api/send-confirmation'), {
+        void fetch(appApiUrl(publicAppUrl, '/api/send-confirmation'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
           body: JSON.stringify({
             clientEmail: newBookingData.clientEmail,
             clientName: newBookingData.clientName,
@@ -363,7 +416,13 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
             outlookCalUrl: bookingResult.outlookCalUrl,
             googleCalUrl: bookingResult.googleCalUrl,
             emailKind: bookingResult.emailKind,
-          })
+          }),
+        }).then(async (response) => {
+          if (response.ok) return;
+          const result = await response.json().catch(() => ({})) as { error?: string };
+          console.error('[brevo] Confirmation email was not accepted.', result.error || response.status);
+        }).catch((error) => {
+          console.error('[brevo] Confirmation email request failed.', error);
         });
     } catch (err) {
       console.error("Failed to dispatch Brevo transactional email:", err);
@@ -390,6 +449,7 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
         bookings={data.bookings}
         onAddBooking={handleAddBooking}
         googleEvents={googleEvents}
+        availabilityStatus={availabilityStatus}
         googleUser={null}
         isEmbedPreview={true}
         providerWorkspaceUrl={appApiUrl(publicAppUrl, '?workspace=true')}
@@ -417,6 +477,7 @@ export default function App({ publicAppUrl }: { publicAppUrl: string }) {
                 bookings={data.bookings}
                 onAddBooking={handleAddBooking}
                 googleEvents={googleEvents}
+                availabilityStatus={availabilityStatus}
                 googleUser={googleUser}
                 isEmbedPreview={false}
                 reschedulePrefill={reschedulePrefill}

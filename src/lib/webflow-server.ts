@@ -63,6 +63,7 @@ async function webflowJson<T>(url: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { ...webflowHeaders(), ...init?.headers },
     cache: 'no-store',
+    signal: init?.signal ?? AbortSignal.timeout(12_000),
   });
 
   if (!response.ok) {

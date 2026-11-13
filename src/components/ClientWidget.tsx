@@ -62,6 +62,7 @@ interface ClientWidgetProps {
   onAddBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'>) => Promise<BookingConfirmationResult | void>;
   isEmbedPreview?: boolean;
   googleEvents?: CalendarEvent[];
+  availabilityStatus?: 'loading' | 'ready' | 'error';
   googleUser?: any | null;
   onOpenProviderWorkspace?: () => void;
   providerWorkspaceUrl?: string;
@@ -76,6 +77,7 @@ export default function ClientWidget({
   onAddBooking,
   isEmbedPreview = false,
   googleEvents = [],
+  availabilityStatus = 'ready',
   googleUser = null,
   onOpenProviderWorkspace,
   providerWorkspaceUrl,
@@ -686,7 +688,15 @@ export default function ClientWidget({
                     </span>
                   </div>
 
-                  {availableSlotsForSelectedDate.length === 0 ? (
+                  {availabilityStatus === 'loading' ? (
+                    <div className="p-8 text-center border border-dashed border-slate-200 bg-white text-[#163666] text-xs" role="status">
+                      Checking live Google Calendar availability…
+                    </div>
+                  ) : availabilityStatus === 'error' ? (
+                    <div className="p-8 text-center border border-dashed border-red-200 bg-red-50/15 text-[#e05047] text-xs" role="alert">
+                      Live availability is temporarily unavailable. Please refresh and try again shortly.
+                    </div>
+                  ) : availableSlotsForSelectedDate.length === 0 ? (
                     <div className="p-8 text-center border border-dashed border-red-200 bg-red-50/15 rounded-2xl text-red-500 text-xs">
                       All hours fully booked. Please scroll or paginate dates above.
                     </div>
